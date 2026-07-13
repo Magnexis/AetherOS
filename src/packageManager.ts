@@ -66,6 +66,7 @@ export function createPackageManagerApp(context: PackageContext = {}) {
   const history: string[] = ["Registry initialized"];
 
   const render = () => {
+    if (!root.isConnected && root.parentElement) return;
     const allPackages = getPackages();
     const selectedPackage = allPackages.find((pkg) => pkg.name === selected) ?? allPackages[0];
     root.innerHTML = `
@@ -192,11 +193,18 @@ export function createPackageManagerApp(context: PackageContext = {}) {
   `;
 
   loadPackages().then(() => {
+    if (!root.isConnected) return;
     result = "Registry ready.";
     render();
   });
   render();
-  subscribePackages(render);
+  const unsubscribe = subscribePackages(() => {
+    if (!root.isConnected) return;
+    render();
+  });
+  root.addEventListener("aether:destroy", () => {
+    unsubscribe();
+  }, { once: true });
   return root;
 }
 

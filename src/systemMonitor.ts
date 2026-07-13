@@ -31,6 +31,7 @@ export function createSystemMonitorApp(windowManager: WindowManager) {
   let simulatedGpu = 22;
 
   const render = () => {
+    if (!root.isConnected && root.parentElement) return;
     const ram = systemInfo ? percentage(systemInfo.used_memory_mb, systemInfo.total_memory_mb) : 0;
     const diskUsed = systemInfo ? percentage(systemInfo.disk_total_gb - systemInfo.disk_available_gb, systemInfo.disk_total_gb) : 0;
     const windows = windowManager.list();
@@ -107,6 +108,7 @@ export function createSystemMonitorApp(windowManager: WindowManager) {
   const refresh = async () => {
     systemInfo = await invokeCommand<LiveSystemInfo>("get_live_system_info", undefined, () => fallbackInfo());
     processes = await invokeCommand<ProcessInfo[]>("list_processes", undefined, () => []);
+    if (!root.isConnected && root.parentElement) return;
     render();
   };
 

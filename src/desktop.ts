@@ -61,6 +61,9 @@ export class AetherDesktop {
   private savedLayout: WindowSnapshot[] = [];
   private palette!: CommandPalette;
   private saveTimer = 0;
+  private abortController = new AbortController();
+  private clockTimer = 0;
+  private unsubscribers: Array<() => void> = [];
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -132,7 +135,7 @@ export class AetherDesktop {
     this.bindShell();
     this.renderDock();
     this.applySettings();
-    window.setInterval(() => this.updateClock(), 1000);
+    this.clockTimer = window.setInterval(() => this.updateClock(), 1000);
     this.updateClock();
     this.bootstrap();
   }
@@ -236,17 +239,17 @@ export class AetherDesktop {
     this.root.querySelectorAll<HTMLButtonElement>("[data-tray]").forEach((button) => {
       button.addEventListener("click", () => this.showTrayMenu(button));
     });
-    this.notifications.subscribe((items) => {
+    this.unsubscribers.push(this.notifications.subscribe((items) => {
       const count = this.root.querySelector("#notify-count");
       if (count) count.textContent = String(items.length);
       notificationCenter.render();
       this.queueSave();
-    });
+    }));
 
-    this.manager.subscribe(() => {
+    this.unsubscribers.push(this.manager.subscribe(() => {
       this.renderDock();
       this.queueSave();
-    });
+    }));
     this.palette = new CommandPalette([
       { label: "Open Terminal", keywords: "shell command", run: () => this.openApp("terminal") },
       { label: "Open Settings", keywords: "preferences appearance", run: () => this.openApp("settings") },
@@ -368,18 +371,25 @@ export class AetherDesktop {
         this.root.querySelector("#workspace-overview")?.classList.remove("visible");
         this.hideMenus();
       }
-    });
+    }, { signal: this.abortController.signal });
     window.addEventListener("message", (event) => {
-      if (event.origin !== window.location.origin) return;
-      if (event.data?.type === "aether-notify") this.notify("Runtime app", String(event.data.body), "success");
-    });
+      const isSameOrigin = event.origin === window.location.origin;
+      const isSandboxedIframe = event.origin === "null" && event.source !== null &&
+        Array.from(document.querySelectorAll(".runtime-window iframe")).some((iframe) => (iframe as HTMLIFrameElement).contentWindow === event.source);
+      if (!isSameOrigin && !isSandboxedIframe) return;
+      if (typeof event.data !== "object" || event.data === null) return;
+      if (event.data.type !== "aether-notify") return;
+      if (typeof event.data.body !== "string") return;
+      const body = event.data.body.slice(0, 500);
+      this.notify("Runtime app", body, "success");
+    }, { signal: this.abortController.signal });
     window.addEventListener("aether:snap-preview", ((event: CustomEvent<string>) => {
       const preview = this.root.querySelector<HTMLElement>("#snap-preview");
       if (!preview) return;
       const side = event.detail;
       preview.classList.toggle("visible", side === "left" || side === "right");
       preview.style.left = side === "right" ? "50vw" : "0";
-    }) as EventListener);
+    }) as EventListener, { signal: this.abortController.signal });
   }
 
   private renderDock() {
@@ -732,6 +742,7 @@ export class AetherDesktop {
 
   private restartShell() {
     this.notify("Shell restarted", "AetherOS refreshed windows, dock, and boot services.", "success");
+    this.manager.destroyAll();
     this.renderDock();
     this.queueSave();
   }
@@ -742,5 +753,18 @@ export class AetherDesktop {
 
   private shutdownShell() {
     this.notify("Shutdown mock", "AetherOS would now close the shell session.", "warning");
+  }
+
+  dispose() {
+    window.clearInterval(this.clockTimer);
+    window.clearTimeout(this.saveTimer);
+    this.abortController.abort();
+    this.unsubscribers.forEach((unsubscribe) => unsubscribe());
+    this.unsubscribers = [];
+    this.manager.dispose();
+  }
+
+  destroy() {
+    this.dispose();
   }
 }

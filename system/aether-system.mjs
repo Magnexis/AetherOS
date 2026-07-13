@@ -79,6 +79,17 @@ export function loadSystemGraph() {
   };
 }
 
+function pruneStreamFile(fullPath, maxLines = 500) {
+  try {
+    if (!fs.existsSync(fullPath)) return;
+    const content = fs.readFileSync(fullPath, "utf8");
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    if (lines.length > maxLines) {
+      fs.writeFileSync(fullPath, lines.slice(-maxLines).join("\n") + "\n");
+    }
+  } catch {}
+}
+
 export function appendSystemLog(source, message, level = "info") {
   const fullPath = path.join(rootDir, paths.log);
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
@@ -89,6 +100,7 @@ export function appendSystemLog(source, message, level = "info") {
     message
   };
   fs.appendFileSync(fullPath, `${JSON.stringify(record)}\n`);
+  pruneStreamFile(fullPath, 500);
   return record;
 }
 
@@ -107,6 +119,7 @@ export function publishEvent(topic, message, payload = {}, level = "info") {
     payload
   };
   fs.appendFileSync(fullPath, `${JSON.stringify(record)}\n`);
+  pruneStreamFile(fullPath, 500);
   appendSystemLog("eventbus", `${topic}: ${message}`, level);
   return record;
 }
@@ -137,6 +150,7 @@ export function appendServiceLog(serviceId, message, level = "info") {
     message
   };
   fs.appendFileSync(fullPath, `${JSON.stringify(record)}\n`);
+  pruneStreamFile(fullPath, 500);
   publishEvent("services", `${serviceId}: ${message}`, { service: serviceId, daemon: service.daemon }, level);
   return record;
 }
@@ -483,6 +497,7 @@ export function createCrashBundle(reason = "manual") {
   fs.writeFileSync(fullPath, `${JSON.stringify(bundle, null, 2)}\n`);
   graph.crashReporter.lastBundles = [{ id: bundle.id, createdAt, reason, status: "ready" }, ...graph.crashReporter.lastBundles].slice(0, 8);
   writeJson(paths.crashReporter, graph.crashReporter);
+  pruneRecoverySnapshots(directory, 8);
   publishEvent("services", `Created crash bundle ${bundle.id}`, { path: path.relative(rootDir, fullPath), reason }, "warning");
   return { ...bundle, path: path.relative(rootDir, fullPath) };
 }
@@ -510,6 +525,33 @@ export function getStorageReport() {
   };
 }
 
+export function runStorageCleanup(target = "all") {
+  const graph = loadSystemGraph();
+  const targets = target === "all" ? graph.storage.maintenance.cleanupTargets : [target];
+  let totalCleanedGb = 0;
+  targets.forEach((t) => {
+    if (t === "cache") {
+      const cacheVol = graph.storage.volumes.find((v) => v.id === "cache");
+      if (cacheVol && cacheVol.usedGb > 4) {
+        totalCleanedGb += cacheVol.usedGb - 4;
+        cacheVol.usedGb = 4;
+        cacheVol.health = "healthy";
+      }
+    } else if (t === "trash") {
+      const sysVol = graph.storage.volumes.find((v) => v.id === "system");
+      if (sysVol && sysVol.usedGb > 140) {
+        const cleaned = Math.min(25, sysVol.usedGb - 140);
+        totalCleanedGb += cleaned;
+        sysVol.usedGb -= cleaned;
+      }
+    }
+  });
+  writeJson(paths.storage, graph.storage);
+  appendSystemLog("storage", `Ran storage cleanup for targets [${targets.join(", ")}], reclaimed ${totalCleanedGb}GB`);
+  publishEvent("storage", `Ran storage cleanup for targets [${targets.join(", ")}]`, { targets, reclaimedGb: totalCleanedGb }, "success");
+  return getStorageReport();
+}
+
 export function writeAudit(category, message, actor = "operator", level = "audit") {
   const graph = loadSystemGraph();
   if (!graph.audit.categories.some((candidate) => candidate.id === category)) throw new Error(`Unknown audit category: ${category}`);
@@ -523,6 +565,7 @@ export function writeAudit(category, message, actor = "operator", level = "audit
     message
   };
   fs.appendFileSync(fullPath, `${JSON.stringify(record)}\n`);
+  pruneStreamFile(fullPath, 500);
   publishEvent("audit", `${category}: ${message}`, { actor, category }, level);
   return record;
 }
@@ -561,6 +604,7 @@ export function createBackupRun(planId, reason = "manual") {
   fs.writeFileSync(fullPath, `${JSON.stringify(backup, null, 2)}\n`);
   graph.backup.lastRuns = [{ plan: planId, status: "ready", createdAt, sizeMb: Math.max(8, plan.targets.length * 12) }, ...graph.backup.lastRuns].slice(0, 10);
   writeJson(paths.backup, graph.backup);
+  pruneRecoverySnapshots(directory, 10);
   publishEvent("backup", `Backup ${backup.id} created`, { path: path.relative(rootDir, fullPath), plan: planId }, "success");
   return { ...backup, path: path.relative(rootDir, fullPath) };
 }
@@ -845,14 +889,17 @@ function topologicalServices(ids, serviceMap) {
 }
 
 function pruneRecoverySnapshots(directory, maxSnapshots) {
-  const snapshots = fs.readdirSync(directory)
-    .filter((file) => file.endsWith(".json"))
-    .map((file) => ({
-      file,
-      fullPath: path.join(directory, file),
-      created: fs.statSync(path.join(directory, file)).mtimeMs
-    }))
-    .sort((a, b) => b.created - a.created);
+  try {
+    if (!fs.existsSync(directory)) return;
+    const snapshots = fs.readdirSync(directory)
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => ({
+        file,
+        fullPath: path.join(directory, file),
+        created: fs.statSync(path.join(directory, file)).mtimeMs
+      }))
+      .sort((a, b) => b.created - a.created);
 
-  snapshots.slice(maxSnapshots).forEach((snapshot) => fs.unlinkSync(snapshot.fullPath));
+    snapshots.slice(maxSnapshots).forEach((snapshot) => fs.unlinkSync(snapshot.fullPath));
+  } catch {}
 }

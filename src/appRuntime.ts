@@ -119,7 +119,7 @@ export function createSandboxedRuntimeWindow(app: AetherAppManifest) {
           button,input { min-height:34px; border:1px solid #6fd2ff; background:#172235; color:#edf4ff; border-radius:7px; padding:0 12px; }
         </style>
       </head>
-      <body>${app.entryHtml ?? `<main><h1>${app.name}</h1><p>Loaded from manifest.</p></main>`}<script>window.Aether={notify:(body)=>parent.postMessage({type:'aether-notify',body}, '*')};</script></body>
+      <body>${app.entryHtml ?? `<main><h1>${app.name}</h1><p>Loaded from manifest.</p></main>`}<script>window.Aether={notify:(body)=>{if(typeof body==='string')parent.postMessage({type:'aether-notify',body:body.slice(0,500)}, '*');}};</script></body>
     </html>
   `;
   root.append(iframe);

@@ -15,6 +15,7 @@ export function createDeveloperConsoleApp(context: DeveloperConsoleContext) {
   let logs = context.logger.list();
 
   const render = () => {
+    if (!root.isConnected && root.parentElement) return;
     const windows = context.windowManager.snapshot();
     root.innerHTML = `
       <div class="app-toolbar">
@@ -53,22 +54,27 @@ export function createDeveloperConsoleApp(context: DeveloperConsoleContext) {
       button.addEventListener("click", async () => {
         const command = button.dataset.command ?? "";
         const result = await invokeCommand(command, undefined, () => ({ preview: "Backend unavailable in browser preview." }));
+        if (!root.isConnected) return;
         commandResult = JSON.stringify(result, null, 2);
         context.logger.log("developer", `Ran ${command}`);
         render();
       });
     });
     root.querySelector<HTMLButtonElement>('[data-action="state"]')?.addEventListener("click", () => {
+      if (!root.isConnected) return;
       commandResult = JSON.stringify(context.getState(), null, 2);
       context.logger.log("developer", "Dumped persisted shell state");
       render();
     });
   };
 
-  context.logger.subscribe((next) => {
+  const unsubscribe = context.logger.subscribe((next) => {
     logs = next;
     render();
   });
+  root.addEventListener("aether:destroy", () => {
+    unsubscribe();
+  }, { once: true });
   render();
   return root;
 }
