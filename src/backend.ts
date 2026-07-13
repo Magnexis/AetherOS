@@ -1,4 +1,16 @@
 export async function invokeCommand<T>(command: string, args?: Record<string, unknown>, fallback?: () => T | Promise<T>): Promise<T> {
+  if (typeof command !== "string" || !command.trim()) {
+    throw new Error("Invalid IPC command name");
+  }
+  if (args && typeof args === "object") {
+    for (const key of ["path", "from", "to", "packagePath"]) {
+      const val = args[key];
+      if (typeof val === "string" && (val.includes("..") || val.includes("\0"))) {
+        if (fallback) return fallback();
+        throw new Error(`Invalid IPC path argument (${key}): traversal blocked`);
+      }
+    }
+  }
   try {
     const api = await import("@tauri-apps/api/core");
     return await api.invoke<T>(command, args);

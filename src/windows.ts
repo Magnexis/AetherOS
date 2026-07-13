@@ -22,6 +22,7 @@ export type ManagedWindow = {
   minimized: boolean;
   maximized: boolean;
   workspace: number;
+  controller?: AbortController;
 };
 
 type WindowListener = (windows: ManagedWindow[], activeId: string | null) => void;
@@ -93,6 +94,7 @@ export class WindowManager {
     shell.append(chrome, body, resizeHandle);
     this.host.append(shell);
 
+    const controller = new AbortController();
     const managed: ManagedWindow = {
       id,
       appId: options.appId,
@@ -102,7 +104,8 @@ export class WindowManager {
       body,
       minimized: false,
       maximized: false,
-      workspace: options.state?.workspace ?? options.workspace ?? this.workspace
+      workspace: options.state?.workspace ?? options.workspace ?? this.workspace,
+      controller
     };
     this.windows.set(id, managed);
     shell.dataset.workspace = String(managed.workspace);
@@ -124,12 +127,31 @@ export class WindowManager {
   close(id: string) {
     const win = this.windows.get(id);
     if (!win) return;
-    win.body.firstElementChild?.dispatchEvent(new CustomEvent("aether:destroy"));
+    win.element.dispatchEvent(new CustomEvent("aether:destroy"));
+    win.body.dispatchEvent(new CustomEvent("aether:destroy"));
+    Array.from(win.body.children).forEach((child) => child.dispatchEvent(new CustomEvent("aether:destroy")));
+    if (win.body.firstElementChild && !Array.from(win.body.children).includes(win.body.firstElementChild)) {
+      win.body.firstElementChild.dispatchEvent(new CustomEvent("aether:destroy"));
+    }
+    win.body.querySelectorAll("*").forEach((el) => el.dispatchEvent(new CustomEvent("aether:destroy")));
+    win.controller?.abort();
     win.element.remove();
     this.windows.delete(id);
-    this.activeId = this.list().at(-1)?.id ?? null;
-    if (this.activeId) this.focus(this.activeId);
+    if (this.activeId === id) {
+      const visible = this.list().filter((candidate) => !candidate.minimized && candidate.workspace === this.workspace);
+      this.activeId = visible.at(-1)?.id ?? this.list().at(-1)?.id ?? null;
+      if (this.activeId) this.focus(this.activeId);
+    }
     this.emit();
+  }
+
+  destroyAll() {
+    Array.from(this.windows.keys()).forEach((id) => this.close(id));
+  }
+
+  dispose() {
+    this.destroyAll();
+    this.listeners.clear();
   }
 
   minimize(id: string) {
@@ -252,7 +274,8 @@ export class WindowManager {
   }
 
   private attachChrome(win: ManagedWindow, chrome: HTMLElement, resizeHandle: HTMLElement) {
-    win.element.addEventListener("pointerdown", () => this.focus(win.id));
+    const signal = win.controller?.signal;
+    win.element.addEventListener("pointerdown", () => this.focus(win.id), { signal });
     chrome.querySelectorAll<HTMLButtonElement>("button[data-action]").forEach((button) => {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -260,7 +283,7 @@ export class WindowManager {
         if (action === "close") this.close(win.id);
         if (action === "minimize") this.minimize(win.id);
         if (action === "maximize") this.toggleMaximize(win.id);
-      });
+      }, { signal });
     });
 
     let startX = 0;
@@ -277,7 +300,7 @@ export class WindowManager {
       startLeft = win.element.offsetLeft;
       startTop = win.element.offsetTop;
       chrome.setPointerCapture(event.pointerId);
-    });
+    }, { signal });
 
     chrome.addEventListener("pointermove", (event) => {
       if (!dragging) return;
@@ -286,17 +309,22 @@ export class WindowManager {
       win.element.style.left = `${nextLeft}px`;
       win.element.style.top = `${nextTop}px`;
       window.dispatchEvent(new CustomEvent("aether:snap-preview", { detail: event.clientX < 24 ? "left" : event.clientX > window.innerWidth - 24 ? "right" : "" }));
-    });
+    }, { signal });
 
-    chrome.addEventListener("pointerup", (event) => {
+    const endDrag = (event: PointerEvent) => {
+      if (!dragging) return;
       dragging = false;
       if (event.clientX < 20) this.snap(win, "left");
       if (event.clientX > window.innerWidth - 20) this.snap(win, "right");
       window.dispatchEvent(new CustomEvent("aether:snap-preview", { detail: "" }));
       if (chrome.hasPointerCapture(event.pointerId)) chrome.releasePointerCapture(event.pointerId);
-    });
+    };
 
-    chrome.addEventListener("dblclick", () => this.toggleMaximize(win.id));
+    chrome.addEventListener("pointerup", endDrag, { signal });
+    chrome.addEventListener("pointercancel", endDrag, { signal });
+    chrome.addEventListener("lostpointercapture", endDrag, { signal });
+
+    chrome.addEventListener("dblclick", () => this.toggleMaximize(win.id), { signal });
 
     let resizing = false;
     let startWidth = 0;
@@ -311,20 +339,25 @@ export class WindowManager {
       startHeight = win.element.offsetHeight;
       resizeHandle.setPointerCapture(event.pointerId);
       this.focus(win.id);
-    });
+    }, { signal });
 
     resizeHandle.addEventListener("pointermove", (event) => {
       if (!resizing) return;
       win.element.style.width = `${Math.max(360, startWidth + event.clientX - startX)}px`;
       win.element.style.height = `${Math.max(280, startHeight + event.clientY - startY)}px`;
       this.emit();
-    });
+    }, { signal });
 
-    resizeHandle.addEventListener("pointerup", (event) => {
+    const endResize = (event: PointerEvent) => {
+      if (!resizing) return;
       resizing = false;
       if (resizeHandle.hasPointerCapture(event.pointerId)) resizeHandle.releasePointerCapture(event.pointerId);
       this.emit();
-    });
+    };
+
+    resizeHandle.addEventListener("pointerup", endResize, { signal });
+    resizeHandle.addEventListener("pointercancel", endResize, { signal });
+    resizeHandle.addEventListener("lostpointercapture", endResize, { signal });
   }
 
   private snap(win: ManagedWindow, side: "left" | "right") {

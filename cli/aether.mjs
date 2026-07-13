@@ -23,6 +23,7 @@ import {
   readSystemLog,
   repairSystemGraph,
   restoreRecoverySnapshot,
+  runStorageCleanup,
   setNetworkProfile,
   setDriverStatus,
   setPackageInstalled,
@@ -195,8 +196,15 @@ try {
     console.log(`Active user: ${graph.accounts.activeUser}`);
     graph.accounts.users.forEach((user) => console.log(`${user.id}\t${user.role}\tencrypted=${user.encrypted}\t${user.displayName}`));
   } else if (command === "storage") {
-    const report = getStorageReport();
-    report.volumes.forEach((volume) => console.log(`${volume.id}\t${volume.usedGb}/${volume.capacityGb}GB\t${volume.usedPercent}%\tencrypted=${volume.encrypted}\t${volume.health}`));
+    const [action = "status", target = "all"] = args;
+    if (action === "cleanup") {
+      const report = runStorageCleanup(target);
+      console.log(`Storage cleanup complete.`);
+      report.volumes.forEach((volume) => console.log(`${volume.id}\t${volume.usedGb}/${volume.capacityGb}GB\t${volume.usedPercent}%\tencrypted=${volume.encrypted}\t${volume.health}`));
+    } else {
+      const report = getStorageReport();
+      report.volumes.forEach((volume) => console.log(`${volume.id}\t${volume.usedGb}/${volume.capacityGb}GB\t${volume.usedPercent}%\tencrypted=${volume.encrypted}\t${volume.health}`));
+    }
   } else if (command === "audit") {
     const [action = "read", category = "all", ...message] = args;
     if (action === "write") {

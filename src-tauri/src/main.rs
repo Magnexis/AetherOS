@@ -622,6 +622,9 @@ fn search_db_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn resolve_path(input: &str) -> Result<PathBuf, String> {
     let trimmed = input.trim();
+    if trimmed.contains("..") || trimmed.contains('\0') {
+        return Err("Invalid path: traversal outside allowed directories is blocked".to_string());
+    }
     for (name, path) in known_folders() {
         if trimmed.eq_ignore_ascii_case(name) {
             return Ok(path);

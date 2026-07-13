@@ -25,7 +25,7 @@ export const runtimeApps: AetherAppManifest[] = [
     installed: true,
     permissions: ["filesystem.read", "notifications"],
     description: "A sandboxed note workspace that proves third-party app manifests and runtime APIs.",
-    entryHtml: "<main><h1>Notes Studio</h1><p>Sandboxed app runtime active.</p><button onclick=\"parent.postMessage({type:'aether-notify',body:'Notes Studio saved a draft'}, window.location.origin)\">Save Draft</button></main>"
+    entryHtml: "<main><h1>Notes Studio</h1><p>Sandboxed app runtime active.</p><button onclick=\"if(window.Aether){window.Aether.notify('Notes Studio saved a draft');}else{parent.postMessage({type:'aether-notify',body:'Notes Studio saved a draft'}, '*');}\">Save Draft</button></main>"
   },
   {
     id: "paint.micro",
