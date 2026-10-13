@@ -32,7 +32,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.8.0"
+    "@tauri-apps/api": "^2.12.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4",
